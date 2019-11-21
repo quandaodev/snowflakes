@@ -6,6 +6,8 @@
 #include "Flake.h"
 #include "shellapi.h"
 #include "commctrl.h"
+#include "wincodec.h"
+#include "wincodecsdk.h"
 #include <chrono>
 #include <thread>
 #include <iostream>
@@ -27,7 +29,10 @@ bool endTimer(false);
 std::thread drawingThread;
 int screenWidth{ 0 }, screenHeight{ 0 };
 HBITMAP g_hFlake, g_hMaskFlake;
-HBITMAP g_hImage = (HBITMAP)::LoadImage(NULL, L"C:\\Wallpaper.bmp", IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION | LR_DEFAULTCOLOR);
+IWICImagingFactory *g_pFactory = NULL;
+HBITMAP g_hImage = NULL; //(HBITMAP)::LoadImage(NULL, L"C:\\Wallpaper.bmp", IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION | LR_DEFAULTCOLOR);
+UINT picWidth{0};
+UINT picHeight{0};
 wchar_t SnowAppToolTip[] = L"Snow fall application";
 HWND hSnowFallWnd{ 0 };
 bool mainWndMinized{ false };
@@ -101,6 +106,53 @@ ATOM MyRegisterClass(HINSTANCE hInstance)
     return RegisterClassExW(&wcex);
 }
 
+HBITMAP CreateHBITMAP(IWICBitmapSource * ipBitmap)
+{
+	// initialize return value
+
+	HBITMAP hbmp = NULL;
+
+	// get image attributes and check for valid image
+
+	
+	if (FAILED(ipBitmap->GetSize(&picWidth, &picHeight)) || picWidth == 0 || picHeight == 0)
+		return hbmp;
+
+	// prepare structure giving bitmap information (negative height indicates a top-down DIB)
+
+	BITMAPINFO bminfo;
+	ZeroMemory(&bminfo, sizeof(bminfo));
+	bminfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+	bminfo.bmiHeader.biWidth = picWidth;
+	bminfo.bmiHeader.biHeight = -((LONG)picHeight);
+	bminfo.bmiHeader.biPlanes = 1;
+	bminfo.bmiHeader.biBitCount = 32;
+	bminfo.bmiHeader.biCompression = BI_RGB;
+
+	// create a DIB section that can hold the image
+
+	void * pvImageBits = NULL;
+	HDC hdcScreen = GetDC(NULL);
+	hbmp = CreateDIBSection(hdcScreen, &bminfo, DIB_RGB_COLORS, &pvImageBits, NULL, 0);
+	ReleaseDC(NULL, hdcScreen);
+	if (hbmp == NULL)
+		return hbmp;
+
+	// extract the image into the HBITMAP
+
+	const UINT cbStride = picWidth * 4;
+	const UINT cbImage = cbStride * picHeight;
+	if (FAILED(ipBitmap->CopyPixels(NULL, cbStride, cbImage, static_cast<BYTE *>(pvImageBits))))
+	{
+		// couldn't extract image; delete HBITMAP
+
+		DeleteObject(hbmp);
+		hbmp = NULL;
+	}
+
+	return hbmp;
+}
+
 //
 //   FUNCTION: InitInstance(HINSTANCE, int)
 //
@@ -126,15 +178,42 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
    //ShowWindow(hWnd, nCmdShow);
    //UpdateWindow(hWnd);
 
+   CoInitialize(NULL);
+
+   // Create the COM imaging factory
+   HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&g_pFactory));
+
+   // Create a decoder
+   IWICBitmapDecoder *pDecoder = NULL;
+   hr = g_pFactory->CreateDecoderFromFilename(
+	   L"C:\\Users\\quan\\Pictures\\Wallpapers\\snow-nature-sky-night-91216.jpg",                      // Image to be decoded
+	   NULL,                            // Do not prefer a particular vendor
+	   GENERIC_READ,                    // Desired read access to the file
+	   WICDecodeMetadataCacheOnDemand,  // Cache metadata when needed
+	   &pDecoder                        // Pointer to the decoder
+   );
+   // Retrieve the first frame of the image from the decoder
+   IWICBitmapFrameDecode *pFrame = NULL;
+   if (SUCCEEDED(hr)) {
+	   hr = pDecoder->GetFrame(0, &pFrame);
+   }
+
+   IWICBitmapSource * ipBitmap = NULL;
+   WICConvertBitmapSource(GUID_WICPixelFormat32bppPBGRA, pFrame, &ipBitmap);
+   pFrame->Release();
+   g_hImage = CreateHBITMAP(ipBitmap);
+
+   pDecoder->Release();
+
    InitDesktopDrawing();
 
-   screenWidth = 1680; //1920;//GetSystemMetrics(SM_CXVIRTUALSCREEN) - GetSystemMetrics(SM_XVIRTUALSCREEN);
-   screenHeight = 1050; //1080;//GetSystemMetrics(SM_CYVIRTUALSCREEN) - GetSystemMetrics(SM_YVIRTUALSCREEN);
+   screenWidth = 1920; //1920;//GetSystemMetrics(SM_CXVIRTUALSCREEN) - GetSystemMetrics(SM_XVIRTUALSCREEN);
+   screenHeight = 1080; //1080;//GetSystemMetrics(SM_CYVIRTUALSCREEN) - GetSystemMetrics(SM_YVIRTUALSCREEN);
 
    g_hFlake = LoadBitmap(hInstance, MAKEINTRESOURCE(IDB_FLAKE));
    g_hMaskFlake = CreateBitmapMask(g_hFlake, RGB(255, 255, 255));
 
-   for (int i = 0; i < 15; ++i) {
+   for (int i = 0; i < 30; ++i) {
 	   g_vtFlakes.emplace_back(std::make_unique<Flake>(screenWidth, screenHeight));
    }
 
@@ -237,6 +316,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		}
 		if (g_hMaskFlake){
 			DeleteObject(g_hMaskFlake);
+		}
+		if (g_pFactory) {
+			g_pFactory->Release();
 		}
 		Shell_NotifyIcon(NIM_DELETE, &nid);
         PostQuitMessage(0);
@@ -359,7 +441,10 @@ void DrawBackgroundImage(HDC hDC)
 {
 	HDC hMemDC = ::CreateCompatibleDC(hDC);
 	HGDIOBJ backObject = ::SelectObject(hMemDC, g_hImage);
-	BitBlt(hDC, 0, 0, screenWidth, screenHeight, hMemDC, 0, 0, SRCCOPY);
+	SetStretchBltMode(hDC, COLORONCOLOR);
+	StretchBlt(hDC, 0, 0, screenWidth, screenHeight, hMemDC, 0, 0, picWidth, picHeight, SRCCOPY);
+
+	//BitBlt(hDC, 0, 0, screenWidth, screenHeight, hMemDC, 0, 0, SRCCOPY);
 	::SelectObject(hMemDC, backObject);
 	::DeleteObject(hMemDC);
 }
@@ -423,6 +508,6 @@ void timer()
 
 		DrawDesktop();
 
-		std::this_thread::sleep_for(std::chrono::milliseconds(25));
+		std::this_thread::sleep_for(std::chrono::milliseconds(20));
 	}
 }
