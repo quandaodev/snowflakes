@@ -153,14 +153,22 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="DeskDrawBoostrapper.h" />
+    <ClInclude Include="DrawingManager.h" />
     <ClInclude Include="Flake.h" />
     <ClInclude Include="framework.h" />
+    <ClInclude Include="MainWnd.h" />
     <ClInclude Include="Resource.h" />
     <ClInclude Include="SnowFall.h" />
     <ClInclude Include="targetver.h" />
+    <ClInclude Include="Utilities.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="DeskDrawBoostrapper.cpp" />
+    <ClCompile Include="DrawingManager.cpp" />
+    <ClCompile Include="MainWnd.cpp" />
     <ClCompile Include="SnowFall.cpp" />
+    <ClCompile Include="Utilities.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="SnowFall.rc" />

@@ -4,44 +4,40 @@
 #include "framework.h"
 #include "SnowFall.h"
 #include "Flake.h"
+#include "DrawingManager.h"
 #include "shellapi.h"
+#include "commdlg.h"
 #include "commctrl.h"
 #include "wincodec.h"
 #include "wincodecsdk.h"
-#include <chrono>
-#include <thread>
-#include <iostream>
-#include <sstream>
-#include <vector>
-#include <memory>
+#include "shlobj_core.h"
 
 #define MAX_LOADSTRING 100
 #define APPWM_ICONNOTIFY (WM_APP + 1)
-class __declspec(uuid("{283c9cbf-3d93-423c-8c00-a1a6af75815d}")) SnowFallUuid;
+class __declspec(uuid("{283c9cbf-3d93-423c-8c01-a1bfaf75815a}")) SnowFallUuid;
 
 // Global Variables:
 HINSTANCE hInst;                                // current instance
 WCHAR szTitle[MAX_LOADSTRING];                  // The title bar text
 WCHAR szWindowClass[MAX_LOADSTRING];            // the main window class name
+
 HWND hWorkerWnd{ 0 };
-std::vector<std::unique_ptr<Flake>> g_vtFlakes;
-bool endTimer(false);
-std::thread drawingThread;
-int screenWidth{ 0 }, screenHeight{ 0 };
-HBITMAP g_hFlake, g_hMaskFlake;
-IWICImagingFactory *g_pFactory = NULL;
-HBITMAP g_hImage = NULL; //(HBITMAP)::LoadImage(NULL, L"C:\\Wallpaper.bmp", IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION | LR_DEFAULTCOLOR);
-UINT picWidth{0};
-UINT picHeight{0};
+
 wchar_t SnowAppToolTip[] = L"Snow fall application";
 HWND hSnowFallWnd{ 0 };
 bool mainWndMinized{ false };
 NOTIFYICONDATA nid = {};
 
+int g_nFrameRate = 60;
+int g_nNumSnowFlakes = 30;
+
+DrawingManager* g_pDrawMan = nullptr; 
+
 // Forward declarations of functions included in this code module:
 ATOM                MyRegisterClass(HINSTANCE hInstance);
 BOOL                InitInstance(HINSTANCE, int);
 LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM);
+INT_PTR CALLBACK	DialogProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM);
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
@@ -80,11 +76,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     return (int) msg.wParam;
 }
 
-//
-//  FUNCTION: MyRegisterClass()
-//
-//  PURPOSE: Registers the window class.
-//
 ATOM MyRegisterClass(HINSTANCE hInstance)
 {
     WNDCLASSEXW wcex;
@@ -106,156 +97,56 @@ ATOM MyRegisterClass(HINSTANCE hInstance)
     return RegisterClassExW(&wcex);
 }
 
-HBITMAP CreateHBITMAP(IWICBitmapSource * ipBitmap)
-{
-	// initialize return value
-
-	HBITMAP hbmp = NULL;
-
-	// get image attributes and check for valid image
-
-	
-	if (FAILED(ipBitmap->GetSize(&picWidth, &picHeight)) || picWidth == 0 || picHeight == 0)
-		return hbmp;
-
-	// prepare structure giving bitmap information (negative height indicates a top-down DIB)
-
-	BITMAPINFO bminfo;
-	ZeroMemory(&bminfo, sizeof(bminfo));
-	bminfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-	bminfo.bmiHeader.biWidth = picWidth;
-	bminfo.bmiHeader.biHeight = -((LONG)picHeight);
-	bminfo.bmiHeader.biPlanes = 1;
-	bminfo.bmiHeader.biBitCount = 32;
-	bminfo.bmiHeader.biCompression = BI_RGB;
-
-	// create a DIB section that can hold the image
-
-	void * pvImageBits = NULL;
-	HDC hdcScreen = GetDC(NULL);
-	hbmp = CreateDIBSection(hdcScreen, &bminfo, DIB_RGB_COLORS, &pvImageBits, NULL, 0);
-	ReleaseDC(NULL, hdcScreen);
-	if (hbmp == NULL)
-		return hbmp;
-
-	// extract the image into the HBITMAP
-
-	const UINT cbStride = picWidth * 4;
-	const UINT cbImage = cbStride * picHeight;
-	if (FAILED(ipBitmap->CopyPixels(NULL, cbStride, cbImage, static_cast<BYTE *>(pvImageBits))))
-	{
-		// couldn't extract image; delete HBITMAP
-
-		DeleteObject(hbmp);
-		hbmp = NULL;
-	}
-
-	return hbmp;
-}
-
-//
-//   FUNCTION: InitInstance(HINSTANCE, int)
-//
-//   PURPOSE: Saves instance handle and creates main window
-//
-//   COMMENTS:
-//
-//        In this function, we save the instance handle in a global variable and
-//        create and display the main program window.
-//
 BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 {
-   hInst = hInstance; // Store instance handle in our global variable
+	CoInitialize(NULL);
 
-   hSnowFallWnd = CreateWindowW(szWindowClass, szTitle, WS_OVERLAPPEDWINDOW,
-      CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, nullptr, nullptr, hInstance, nullptr);
+	
+	hInst = hInstance; // Store instance handle in our global variable
 
-   if (!hSnowFallWnd)
-   {
-      return FALSE;
-   }
+	hSnowFallWnd = CreateDialog(hInstance, MAKEINTRESOURCE(IDD_MAIN), NULL, (DLGPROC)DialogProc);
 
-   //ShowWindow(hWnd, nCmdShow);
-   //UpdateWindow(hWnd);
+	if (!hSnowFallWnd) {
+		return FALSE;
+	}
+   
+    ShowWindow(hSnowFallWnd, SW_SHOW);
 
-   CoInitialize(NULL);
+    InitDesktopDrawing();
 
-   // Create the COM imaging factory
-   HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&g_pFactory));
+	g_pDrawMan = new DrawingManager(hWorkerWnd, g_nNumSnowFlakes, g_nFrameRate);
+	g_pDrawMan->InitDrawing();
 
-   // Create a decoder
-   IWICBitmapDecoder *pDecoder = NULL;
-   hr = g_pFactory->CreateDecoderFromFilename(
-	   L"C:\\Users\\quan\\Pictures\\Wallpapers\\snow-nature-sky-night-91216.jpg",                      // Image to be decoded
-	   NULL,                            // Do not prefer a particular vendor
-	   GENERIC_READ,                    // Desired read access to the file
-	   WICDecodeMetadataCacheOnDemand,  // Cache metadata when needed
-	   &pDecoder                        // Pointer to the decoder
-   );
-   // Retrieve the first frame of the image from the decoder
-   IWICBitmapFrameDecode *pFrame = NULL;
-   if (SUCCEEDED(hr)) {
-	   hr = pDecoder->GetFrame(0, &pFrame);
-   }
+    // Shell Notify Icon
+    /*nid.cbSize = sizeof(nid);
+    nid.hWnd = hSnowFallWnd;
+    nid.uFlags = NIF_ICON | NIF_TIP | NIF_GUID | NIF_MESSAGE;
+    nid.uCallbackMessage = APPWM_ICONNOTIFY;
+    nid.guidItem = __uuidof(SnowFallUuid);
+    lstrcpyW(nid.szTip, SnowAppToolTip);
+    LoadIconMetric(hInst, MAKEINTRESOURCE(IDI_SNOWMAN), LIM_SMALL, &(nid.hIcon));
 
-   IWICBitmapSource * ipBitmap = NULL;
-   WICConvertBitmapSource(GUID_WICPixelFormat32bppPBGRA, pFrame, &ipBitmap);
-   pFrame->Release();
-   g_hImage = CreateHBITMAP(ipBitmap);
+    Shell_NotifyIcon(NIM_ADD, &nid);*/
 
-   pDecoder->Release();
-
-   InitDesktopDrawing();
-
-   screenWidth = 1920; //1920;//GetSystemMetrics(SM_CXVIRTUALSCREEN) - GetSystemMetrics(SM_XVIRTUALSCREEN);
-   screenHeight = 1080; //1080;//GetSystemMetrics(SM_CYVIRTUALSCREEN) - GetSystemMetrics(SM_YVIRTUALSCREEN);
-
-   g_hFlake = LoadBitmap(hInstance, MAKEINTRESOURCE(IDB_FLAKE));
-   g_hMaskFlake = CreateBitmapMask(g_hFlake, RGB(255, 255, 255));
-
-   for (int i = 0; i < 30; ++i) {
-	   g_vtFlakes.emplace_back(std::make_unique<Flake>(screenWidth, screenHeight));
-   }
-
-   drawingThread = std::thread(timer);
-
-   // Shell Notify Icon
-   nid.cbSize = sizeof(nid);
-   nid.hWnd = hSnowFallWnd;
-   nid.uFlags = NIF_ICON | NIF_TIP | NIF_GUID | NIF_MESSAGE;
-   nid.uCallbackMessage = APPWM_ICONNOTIFY;
-   nid.guidItem = __uuidof(SnowFallUuid);
-   lstrcpyW(nid.szTip, SnowAppToolTip);
-   LoadIconMetric(hInst, MAKEINTRESOURCE(IDI_SNOWMAN), LIM_SMALL, &(nid.hIcon));
-
-   Shell_NotifyIcon(NIM_ADD, &nid);
-
-   return TRUE;
+    SetDlgItemText(hSnowFallWnd, IDC_EDIT_WPP_LOCATION, L"Current Wallpaper");
+    SetDlgItemText(hSnowFallWnd, IDC_EDIT_FRAME_RATE, std::to_wstring(g_nFrameRate).c_str());
+    SetDlgItemText(hSnowFallWnd, IDC_EDIT_NUM_SNOWFLAKES, std::to_wstring(g_nNumSnowFlakes).c_str());
+    return TRUE;
 }
 
-//
-//  FUNCTION: WndProc(HWND, UINT, WPARAM, LPARAM)
-//
-//  PURPOSE: Processes messages for the main window.
-//
-//  WM_COMMAND  - process the application menu
-//  WM_PAINT    - Paint the main window
-//  WM_DESTROY  - post a quit message and return
-//
-//
-LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
+INT_PTR CALLBACK DialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
-    switch (message)
-    {
-	case APPWM_ICONNOTIFY:
+	switch (uMsg)
+	{
+		case APPWM_ICONNOTIFY:
 		{
 			switch (lParam)
 			{
 			case WM_LBUTTONUP:
 				ShowWindow(hSnowFallWnd, SW_SHOW);
-				if (mainWndMinized) 
+				if (mainWndMinized)
 					ShowWindow(hSnowFallWnd, SW_RESTORE);
-				Shell_NotifyIcon(NIM_DELETE, &nid);
+				//Shell_NotifyIcon(NIM_DELETE, &nid);
 				break;
 			case WM_RBUTTONUP:
 				HMENU popMenu = CreatePopupMenu();
@@ -264,69 +155,92 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
 				POINT pCursor;
 				GetCursorPos(&pCursor);
-				TrackPopupMenu(popMenu, TPM_LEFTBUTTON|TPM_RIGHTALIGN, pCursor.x, pCursor.y, 0, hWnd, NULL);
+				TrackPopupMenu(popMenu, TPM_LEFTBUTTON | TPM_RIGHTALIGN, pCursor.x, pCursor.y, 0, hSnowFallWnd, NULL);
 				break;
 			}
-
-			return 0;
+			return TRUE;
 		}
 		break;
-    case WM_COMMAND:
-        {
-            int wmId = LOWORD(wParam);
-            // Parse the menu selections:
-            switch (wmId)
-            {
-			case IDM_SHOW:
+		case WM_COMMAND:
+		{
+			switch (LOWORD(wParam))
+			{
+				case IDM_ABOUT:
+				{
+					DialogBox(hInst, MAKEINTRESOURCE(IDD_ABOUTBOX), hSnowFallWnd, About);
+					return TRUE;
+				}
 				break;
-            case IDM_ABOUT:
-                DialogBox(hInst, MAKEINTRESOURCE(IDD_ABOUTBOX), hWnd, About);
-                break;
-            case IDM_EXIT:
-                DestroyWindow(hWnd);
-                break;
-            default:
-                return DefWindowProc(hWnd, message, wParam, lParam);
-            }
-        }
-        break;
-	case WM_SIZE:
-	{
-		if (wParam == SIZE_MINIMIZED) {
-			mainWndMinized = true;
-			ShowWindow(hSnowFallWnd, SW_HIDE);
-			Shell_NotifyIcon(NIM_ADD, &nid);
-		}
-	}
-		break;
-    case WM_PAINT:
-        {
-            PAINTSTRUCT ps;
-            HDC hdc = BeginPaint(hWnd, &ps);
-            // TODO: Add any drawing code that uses hdc here...
-            EndPaint(hWnd, &ps);
-        }
-        break;
-    case WM_DESTROY:
-		endTimer = true;
-		drawingThread.join();
+				case IDM_EXIT:
+				{
+					DestroyWindow(hSnowFallWnd);
+					return TRUE;
+				}
+				break;
+				case IDCANCEL:
+				{
+					SendMessage(hDlg, WM_CLOSE, 0, 0);
+					return TRUE;
+				}
+				break;
+				case IDC_WPP_BROWSE:
+				{
+					OPENFILENAME ofn;
+					wchar_t szFileName[MAX_PATH] = L"";
 
-		if (g_hImage) {
-			DeleteObject(g_hImage);
+					ZeroMemory(&ofn, sizeof(ofn));
+
+					ofn.lStructSize = sizeof(ofn);
+					ofn.hwndOwner = NULL;
+					ofn.lpstrFilter = L"All Files (*.*)\0*.*\0";
+					ofn.lpstrFile = szFileName;
+					ofn.nMaxFile = MAX_PATH;
+					ofn.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_HIDEREADONLY;
+					ofn.lpstrDefExt = L"jpg";
+
+					GetOpenFileName(&ofn);
+					SetDlgItemText(hSnowFallWnd, IDC_EDIT_WPP_LOCATION, szFileName);
+					return TRUE;
+				}
+				break;
+			}
 		}
-		if (g_hMaskFlake){
-			DeleteObject(g_hMaskFlake);
+		break;
+		case WM_CLOSE:
+			if (MessageBox(hDlg, TEXT("Close the program?"), TEXT("Close"),
+				MB_ICONQUESTION | MB_YESNO) == IDYES)
+			{
+				DestroyWindow(hDlg);
+			}
+			return FALSE;
+		case WM_SIZE:
+		{
+			if (wParam == SIZE_MINIMIZED) {
+				mainWndMinized = true;
+				ShowWindow(hSnowFallWnd, SW_HIDE);
+				Shell_NotifyIcon(NIM_ADD, &nid);
+				return TRUE;
+			}
+			return FALSE;
 		}
-		if (g_pFactory) {
-			g_pFactory->Release();
+		break;
+		case WM_DESTROY:
+		{
+			delete g_pDrawMan;
+			g_pDrawMan = nullptr;
+
+			Shell_NotifyIcon(NIM_DELETE, &nid);
+			PostQuitMessage(0);
+			return TRUE;
 		}
-		Shell_NotifyIcon(NIM_DELETE, &nid);
-        PostQuitMessage(0);
-        break;
-    default:
-        return DefWindowProc(hWnd, message, wParam, lParam);
-    }
-    return 0;
+		break;
+	}
+	return FALSE;
+}
+
+LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+	return DefWindowProc(hWnd, message, wParam, lParam);
 }
 
 // Message handler for about box.
@@ -369,145 +283,3 @@ bool InitDesktopDrawing()
 	return true;
 }
 
-HBITMAP CreateBitmapMask(HBITMAP hbmColour, COLORREF crTransparent)
-{
-	HDC hdcMem, hdcMem2;
-	HBITMAP hbmMask;
-	BITMAP bm;
-
-	// Create monochrome (1 bit) mask bitmap.  
-
-	GetObject(hbmColour, sizeof(BITMAP), &bm);
-	hbmMask = CreateBitmap(bm.bmWidth, bm.bmHeight, 1, 1, NULL);
-
-	// Get some HDCs that are compatible with the display driver
-
-	hdcMem = CreateCompatibleDC(0);
-	hdcMem2 = CreateCompatibleDC(0);
-
-	HBITMAP hOldBmp1 = (HBITMAP)SelectObject(hdcMem, hbmColour);
-	HBITMAP hOldBmp2 = (HBITMAP)SelectObject(hdcMem2, hbmMask);
-
-	// Set the background colour of the colour image to the colour
-	// you want to be transparent.
-	SetBkColor(hdcMem, crTransparent);
-
-	// Copy the bits from the colour image to the B+W mask... everything
-	// with the background colour ends up white while everythig else ends up
-	// black...Just what we wanted.
-
-	BitBlt(hdcMem2, 0, 0, bm.bmWidth, bm.bmHeight, hdcMem, 0, 0, SRCCOPY);
-
-	// Take our new mask and use it to turn the transparent colour in our
-	// original colour image to black so the transparency effect will
-	// work right.
-	BitBlt(hdcMem, 0, 0, bm.bmWidth, bm.bmHeight, hdcMem2, 0, 0, SRCINVERT);
-
-	// Clean up.
-
-	::SelectObject(hdcMem, hOldBmp1);
-	::SelectObject(hdcMem2, hOldBmp2);
-
-	::DeleteDC(hdcMem);
-	::DeleteDC(hdcMem2);
-
-	return hbmMask;
-}
-
-void DrawDebugInfo(HDC hdc)
-{
-	std::wostringstream strStream;
-	strStream << "Width:" << screenWidth << " Height:" << screenHeight;
-
-	RECT rtText;
-	rtText.left = 500;
-	rtText.right = rtText.left + 1000;
-	rtText.top = 800;
-	rtText.bottom = rtText.top + 100;
-
-	::DrawText(hdc, strStream.str().c_str(), (int)strStream.str().length(), &rtText, 0);
-}
-
-void FillBackgroundColor(HDC hDC, COLORREF bkColor)
-{
-	HBRUSH brushBk = ::CreateSolidBrush(bkColor);
-	HGDIOBJ hBrushBack = ::SelectObject(hDC, brushBk);
-	::Rectangle(hDC, 0, 0, screenWidth, screenHeight);
-	::SelectObject(hDC, hBrushBack);
-	::DeleteObject(brushBk);
-}
-
-void DrawBackgroundImage(HDC hDC)
-{
-	HDC hMemDC = ::CreateCompatibleDC(hDC);
-	HGDIOBJ backObject = ::SelectObject(hMemDC, g_hImage);
-	SetStretchBltMode(hDC, COLORONCOLOR);
-	StretchBlt(hDC, 0, 0, screenWidth, screenHeight, hMemDC, 0, 0, picWidth, picHeight, SRCCOPY);
-
-	//BitBlt(hDC, 0, 0, screenWidth, screenHeight, hMemDC, 0, 0, SRCCOPY);
-	::SelectObject(hMemDC, backObject);
-	::DeleteObject(hMemDC);
-}
-
-void DrawFlake(HDC hDC)
-{
-	// Get bitmap size
-	BITMAP bm;
-	GetObject(g_hFlake, sizeof(bm), &bm);
-
-	HDC hFlakeDC = CreateCompatibleDC(hDC);
-	HDC hMaskFlakeDC = CreateCompatibleDC(hDC);
-	if (hFlakeDC && hMaskFlakeDC)
-	{
-		HBITMAP hOldBmpFlake = (HBITMAP)::SelectObject(hFlakeDC, g_hFlake);
-		HBITMAP hOldBmpMaskFlake = (HBITMAP)::SelectObject(hMaskFlakeDC, g_hMaskFlake);
-
-		for (auto& f : g_vtFlakes) {
-			BitBlt(hDC, f->GetX(), f->GetY(), bm.bmWidth, bm.bmHeight, hMaskFlakeDC, 0, 0, SRCAND);
-			BitBlt(hDC, f->GetX(), f->GetY(), bm.bmWidth, bm.bmHeight, hFlakeDC, 0, 0, SRCPAINT);
-		}
-
-		::SelectObject(hFlakeDC, hOldBmpFlake);
-		::SelectObject(hMaskFlakeDC, hOldBmpMaskFlake);
-
-		::DeleteDC(hFlakeDC);
-		::DeleteDC(hMaskFlakeDC);
-	}
-}
-
-bool DrawDesktop()
-{
-	HDC hdc = ::GetDCEx(hWorkerWnd, 0, 0x403);
-	HDC hMemDC = ::CreateCompatibleDC(NULL);
-
-	// Create a buffer for memDC
-	HBITMAP hBckBmp = ::CreateCompatibleBitmap(hdc, screenWidth, screenHeight);
-	HGDIOBJ hOldBmp = ::SelectObject(hMemDC, hBckBmp);
-
-	DrawBackgroundImage(hMemDC);
-	DrawFlake(hMemDC);
-	// DrawDebugInfo();
-
-	::BitBlt(hdc, 0, 0, screenWidth, screenHeight, hMemDC, 0, 0, SRCCOPY);
-
-	::SelectObject(hMemDC, hOldBmp);
-
-	::DeleteObject(hBckBmp);
-	::DeleteDC(hMemDC);
-	::ReleaseDC(hWorkerWnd, hdc);
-
-	return true;
-}
-
-void timer()
-{
-	while (!endTimer) {
-		for (auto &f : g_vtFlakes) {
-			f->MoveNext();
-		}
-
-		DrawDesktop();
-
-		std::this_thread::sleep_for(std::chrono::milliseconds(20));
-	}
-}
