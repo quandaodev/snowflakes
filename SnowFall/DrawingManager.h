@@ -10,6 +10,7 @@ public:
 	DrawingManager(HWND hWorkerWnd, UINT numSnowFlakes, UINT frameRate);
 	~DrawingManager();
 
+	void InitBackgroundImage(std::wstring path);
 	void InitDrawing();
 	HBITMAP CreateHBITMAP(IWICBitmapSource * ipBitmap);
 
@@ -20,6 +21,8 @@ public:
 	void DrawFlake(HDC hDC);
 	bool DrawDesktop();
 
+	static DrawingManager* GetInstance();
+
 	HWND hWorkerWnd;
 	UINT picWidth;
 	UINT picHeight;
@@ -27,5 +30,6 @@ public:
 	UINT screenHeight;
 	UINT numSnowFlakes;
 	UINT frameRate;
+	std::wstring path = L"";
 };
 

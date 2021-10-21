@@ -2,23 +2,37 @@
 #include "DrawingManager.h"
 #include "Flake.h"
 
-IWICImagingFactory *g_pFactory = NULL;
-std::vector<std::unique_ptr<Flake>> g_vtFlakes;
-bool endTimer(false);
-std::thread drawingThread;
-int screenWidth{ 0 }, screenHeight{ 0 };
-HBITMAP g_hFlake, g_hMaskFlake;
+using namespace std;
 
-HBITMAP g_hImage = NULL;
+IWICImagingFactory *g_pFactory = nullptr;
+
+bool endTimer(false);
+
+std::thread drawingThread;
+int screenWidth{ 0 }, screenHeight{ 0 }, screenOffsetX{ 0 }, screenOffsetY{ 0 };
+
+HBITMAP g_hFlake{ nullptr }, g_hMaskFlake{nullptr}, g_hImage{ nullptr };
+std::vector<std::unique_ptr<Flake>> g_vtFlakes;
 
 void timer();
-DrawingManager* g_drawingManager = nullptr; // TODO: refactor singleton
+DrawingManager* g_drawingManager{ nullptr }; // TODO: refactor singleton
+
+DrawingManager* DrawingManager::GetInstance()
+{
+	return g_drawingManager;
+}
 
 DrawingManager::DrawingManager(HWND hWorkerWnd, UINT numSnowFlakes, UINT frameRate)
 	:hWorkerWnd{ hWorkerWnd }, picWidth{ 0 }, picHeight{ 0 }, numSnowFlakes{ numSnowFlakes }, frameRate{frameRate}
 {
-	screenWidth = 1920; //GetSystemMetrics(SM_CXVIRTUALSCREEN) - GetSystemMetrics(SM_XVIRTUALSCREEN);
-	screenHeight = 1080; //GetSystemMetrics(SM_CYVIRTUALSCREEN) - GetSystemMetrics(SM_YVIRTUALSCREEN);
+	//screenWidth = GetSystemMetrics(SM_CXVIRTUALSCREEN) - GetSystemMetrics(SM_XVIRTUALSCREEN);
+	//screenHeight = GetSystemMetrics(SM_CYVIRTUALSCREEN) - GetSystemMetrics(SM_YVIRTUALSCREEN);
+
+	screenWidth = GetSystemMetrics(SM_CXSCREEN);
+	screenHeight = GetSystemMetrics(SM_CYSCREEN);
+	screenOffsetX = 3840;//-GetSystemMetrics(SM_XVIRTUALSCREEN);
+	screenOffsetY = GetSystemMetrics(SM_YVIRTUALSCREEN);
+
 
 	if (!g_pFactory) {
 		// Create the COM imaging factory
@@ -29,8 +43,13 @@ DrawingManager::DrawingManager(HWND hWorkerWnd, UINT numSnowFlakes, UINT frameRa
 
 DrawingManager::~DrawingManager()
 {
-	endTimer = true;
-	drawingThread.join();
+	if (drawingThread.get_id() != std::thread::id())
+	{
+		endTimer = true;
+		drawingThread.join();
+	}
+
+	g_vtFlakes.clear();
 
 	if (g_hImage) {
 		DeleteObject(g_hImage);
@@ -43,26 +62,24 @@ DrawingManager::~DrawingManager()
 	}
 }
 
-void DrawingManager::InitDrawing()
+void DrawingManager::InitBackgroundImage(wstring path)
 {
-	HINSTANCE hInstance = GetModuleHandle(NULL);
-	g_hFlake = LoadBitmap(hInstance, MAKEINTRESOURCE(IDB_FLAKE));
-	g_hMaskFlake = CreateBitmapMask(g_hFlake, RGB(255, 255, 255));
-
-	for (UINT i = 0; i < numSnowFlakes; ++i) {
-		g_vtFlakes.emplace_back(std::make_unique<Flake>(screenWidth, screenHeight));
-	}
-
-	drawingThread = std::thread(timer);
-
-	wchar_t szAppPath[MAX_PATH];
 	std::wostringstream w;
-	if (SUCCEEDED(SHGetFolderPath(NULL, CSIDL_APPDATA, NULL, 0, szAppPath))) {
-		w << szAppPath << L"\\Microsoft\\Windows\\Themes\\TranscodedWallpaper";
-	}
 
+	if (path.empty() || path == L"Current Wallpaper")
+	{
+		wchar_t szAppPath[MAX_PATH]{0};
+		if (SUCCEEDED(SHGetFolderPath(NULL, CSIDL_APPDATA, NULL, 0, szAppPath))) {
+			w << szAppPath << L"\\Microsoft\\Windows\\Themes\\TranscodedWallpaper";
+		}
+	}
+	else
+	{
+		w << path;
+	}
+	
 	// Create a decoder
-	IWICBitmapDecoder *pDecoder = NULL;
+	IWICBitmapDecoder* pDecoder{ nullptr };
 	HRESULT hr = g_pFactory->CreateDecoderFromFilename(
 		w.str().c_str(),                      // Image to be decoded
 		NULL,                            // Do not prefer a particular vendor
@@ -71,17 +88,46 @@ void DrawingManager::InitDrawing()
 		&pDecoder                        // Pointer to the decoder
 	);
 	// Retrieve the first frame of the image from the decoder
-	IWICBitmapFrameDecode *pFrame = NULL;
+	IWICBitmapFrameDecode* pFrame{ nullptr };
 	if (SUCCEEDED(hr)) {
 		hr = pDecoder->GetFrame(0, &pFrame);
 	}
 
-	IWICBitmapSource * ipBitmap = NULL;
-	WICConvertBitmapSource(GUID_WICPixelFormat32bppPBGRA, pFrame, &ipBitmap);
-	pFrame->Release();
+	IWICBitmapSource* ipBitmap{ nullptr };
+	if (pFrame){
+		WICConvertBitmapSource(GUID_WICPixelFormat32bppPBGRA, pFrame, &ipBitmap);
+		pFrame->Release();
+		pFrame = nullptr;
+	}
+	
 	g_hImage = CreateHBITMAP(ipBitmap);
 
 	pDecoder->Release();
+}
+
+void DrawingManager::InitDrawing()
+{
+	if (g_hFlake == nullptr && g_hMaskFlake == nullptr)
+	{
+		HINSTANCE hInstance = GetModuleHandle(NULL);
+		g_hFlake = LoadBitmap(hInstance, MAKEINTRESOURCE(IDB_FLAKE));
+		g_hMaskFlake = CreateBitmapMask(g_hFlake, RGB(255, 255, 255));
+	}
+
+	if (drawingThread.get_id() != std::thread::id())
+	{
+		endTimer = true;
+		drawingThread.join();
+	}
+	
+	g_vtFlakes.clear();
+	for (UINT i = 0; i < numSnowFlakes; ++i) {
+		g_vtFlakes.emplace_back(std::make_unique<Flake>(screenWidth, screenHeight));
+	}
+	endTimer = false;
+	drawingThread = std::thread(timer);
+
+	InitBackgroundImage(path);
 }
 
 HBITMAP DrawingManager::CreateHBITMAP(IWICBitmapSource * ipBitmap)
@@ -240,9 +286,9 @@ bool DrawingManager::DrawDesktop()
 
 	DrawBackgroundImage(hMemDC);
 	DrawFlake(hMemDC);
-	// DrawDebugInfo();
+	DrawDebugInfo(hMemDC);
 
-	::BitBlt(hdc, 0, 0, screenWidth, screenHeight, hMemDC, 0, 0, SRCCOPY);
+	::BitBlt(hdc, screenOffsetX, screenOffsetY, screenWidth, screenHeight, hMemDC, 0, 0, SRCCOPY);
 
 	::SelectObject(hMemDC, hOldBmp);
 
@@ -256,12 +302,25 @@ bool DrawingManager::DrawDesktop()
 void timer()
 {
 	while (!endTimer) {
+		std::wostringstream w;
+
+		auto start = std::chrono::high_resolution_clock::now();
 		for (auto &f : g_vtFlakes) {
 			f->MoveNext();
 		}
-
 		g_drawingManager->DrawDesktop();
-		std::this_thread::sleep_for(std::chrono::milliseconds(1 / g_drawingManager->frameRate));
+		auto end = std::chrono::high_resolution_clock::now();
+
+		std::chrono::duration<double, std::milli> elapsed = end - start;
+		
+		w << "Draw takes " << elapsed.count() << " ms" << std::endl;
+
+		start = std::chrono::high_resolution_clock::now();
+		std::this_thread::sleep_for(std::chrono::milliseconds(1000 / g_drawingManager->frameRate));
+		end = std::chrono::high_resolution_clock::now();
+		w << "Waited " << elapsed.count() << " ms" << std::endl;
+
+		OutputDebugString(w.str().c_str());
 	}
 }
 

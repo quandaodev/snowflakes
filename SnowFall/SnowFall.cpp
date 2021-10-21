@@ -33,13 +33,6 @@ int g_nNumSnowFlakes = 30;
 
 DrawingManager* g_pDrawMan = nullptr; 
 
-// Forward declarations of functions included in this code module:
-ATOM                MyRegisterClass(HINSTANCE hInstance);
-BOOL                InitInstance(HINSTANCE, int);
-LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM);
-INT_PTR CALLBACK	DialogProc(HWND, UINT, WPARAM, LPARAM);
-INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM);
-
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                      _In_opt_ HINSTANCE hPrevInstance,
                      _In_ LPWSTR    lpCmdLine,
@@ -78,7 +71,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
 ATOM MyRegisterClass(HINSTANCE hInstance)
 {
-    WNDCLASSEXW wcex;
+	WNDCLASSEXW wcex{};
 
     wcex.cbSize = sizeof(WNDCLASSEX);
 
@@ -97,40 +90,49 @@ ATOM MyRegisterClass(HINSTANCE hInstance)
     return RegisterClassExW(&wcex);
 }
 
+BOOL IntializeShellIcon()
+{
+	nid.cbSize = sizeof(nid);
+	nid.hWnd = hSnowFallWnd;
+	nid.uFlags = NIF_ICON | NIF_TIP | NIF_GUID | NIF_MESSAGE;
+	nid.uCallbackMessage = APPWM_ICONNOTIFY;
+	nid.guidItem = __uuidof(SnowFallUuid);
+	lstrcpyW(nid.szTip, SnowAppToolTip);
+	LoadIconMetric(hInst, MAKEINTRESOURCE(IDI_SNOWMAN), LIM_SMALL, &(nid.hIcon));
+
+	return TRUE;
+}
+
 BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 {
-	CoInitialize(NULL);
+	auto res = CoInitialize(NULL);
 
-	
 	hInst = hInstance; // Store instance handle in our global variable
 
 	hSnowFallWnd = CreateDialog(hInstance, MAKEINTRESOURCE(IDD_MAIN), NULL, (DLGPROC)DialogProc);
 
-	if (!hSnowFallWnd) {
-		return FALSE;
+	if (!ShowWindow(hSnowFallWnd, SW_SHOW))
+	{
+		OutputDebugString(L"ShowWindow failed");
 	}
-   
-    ShowWindow(hSnowFallWnd, SW_SHOW);
 
     InitDesktopDrawing();
 
 	g_pDrawMan = new DrawingManager(hWorkerWnd, g_nNumSnowFlakes, g_nFrameRate);
 	g_pDrawMan->InitDrawing();
 
-    // Shell Notify Icon
-    /*nid.cbSize = sizeof(nid);
-    nid.hWnd = hSnowFallWnd;
-    nid.uFlags = NIF_ICON | NIF_TIP | NIF_GUID | NIF_MESSAGE;
-    nid.uCallbackMessage = APPWM_ICONNOTIFY;
-    nid.guidItem = __uuidof(SnowFallUuid);
-    lstrcpyW(nid.szTip, SnowAppToolTip);
-    LoadIconMetric(hInst, MAKEINTRESOURCE(IDI_SNOWMAN), LIM_SMALL, &(nid.hIcon));
+	if (!IntializeShellIcon())
+	{
+		OutputDebugString(L"InitializeShellIcon failed");
+	}
 
-    Shell_NotifyIcon(NIM_ADD, &nid);*/
+	if (hSnowFallWnd)
+	{
+		SetDlgItemText(hSnowFallWnd, IDC_EDIT_WPP_LOCATION, L"Current Wallpaper");
+		SetDlgItemText(hSnowFallWnd, IDC_EDIT_FRAME_RATE, std::to_wstring(g_nFrameRate).c_str());
+		SetDlgItemText(hSnowFallWnd, IDC_EDIT_NUM_SNOWFLAKES, std::to_wstring(g_nNumSnowFlakes).c_str());
+	}
 
-    SetDlgItemText(hSnowFallWnd, IDC_EDIT_WPP_LOCATION, L"Current Wallpaper");
-    SetDlgItemText(hSnowFallWnd, IDC_EDIT_FRAME_RATE, std::to_wstring(g_nFrameRate).c_str());
-    SetDlgItemText(hSnowFallWnd, IDC_EDIT_NUM_SNOWFLAKES, std::to_wstring(g_nNumSnowFlakes).c_str());
     return TRUE;
 }
 
@@ -146,7 +148,6 @@ INT_PTR CALLBACK DialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 				ShowWindow(hSnowFallWnd, SW_SHOW);
 				if (mainWndMinized)
 					ShowWindow(hSnowFallWnd, SW_RESTORE);
-				//Shell_NotifyIcon(NIM_DELETE, &nid);
 				break;
 			case WM_RBUTTONUP:
 				HMENU popMenu = CreatePopupMenu();
@@ -180,6 +181,27 @@ INT_PTR CALLBACK DialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 				case IDCANCEL:
 				{
 					SendMessage(hDlg, WM_CLOSE, 0, 0);
+					return TRUE;
+				}
+				case IDOK:
+				{
+					wchar_t buffer[256] = {0};
+
+					auto pDrawingMan = DrawingManager::GetInstance();
+
+					GetDlgItemText(hSnowFallWnd, IDC_EDIT_WPP_LOCATION, buffer, _countof(buffer));
+					pDrawingMan->path = std::wstring(buffer);
+
+					GetDlgItemText(hSnowFallWnd, IDC_EDIT_FRAME_RATE, buffer, _countof(buffer));
+					pDrawingMan->frameRate = _wtoi(buffer);
+
+					GetDlgItemText(hSnowFallWnd, IDC_EDIT_NUM_SNOWFLAKES, buffer, _countof(buffer));
+					pDrawingMan->numSnowFlakes = _wtoi(buffer);
+
+					// IDC_EDIT_FALLING_SPEED
+
+					DrawingManager::GetInstance()->InitDrawing();
+
 					return TRUE;
 				}
 				break;
@@ -218,7 +240,14 @@ INT_PTR CALLBACK DialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 			if (wParam == SIZE_MINIMIZED) {
 				mainWndMinized = true;
 				ShowWindow(hSnowFallWnd, SW_HIDE);
+
+				Shell_NotifyIcon(NIM_DELETE, &nid); // delete before adding for cases not deleted last time
 				Shell_NotifyIcon(NIM_ADD, &nid);
+
+				return TRUE;
+			}
+			else if (wParam == SIZE_RESTORED) {
+				
 				return TRUE;
 			}
 			return FALSE;
@@ -282,4 +311,3 @@ bool InitDesktopDrawing()
 	EnumWindows(MyWndEnum, 0);
 	return true;
 }
-
