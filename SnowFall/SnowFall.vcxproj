@@ -153,6 +153,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="DebugInfo.h" />
     <ClInclude Include="DeskDrawBoostrapper.h" />
     <ClInclude Include="DrawingManager.h" />
     <ClInclude Include="Flake.h" />

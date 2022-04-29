@@ -14,7 +14,7 @@ int screenWidth{ 0 }, screenHeight{ 0 }, screenOffsetX{ 0 }, screenOffsetY{ 0 };
 HBITMAP g_hFlake{ nullptr }, g_hMaskFlake{nullptr}, g_hImage{ nullptr };
 std::vector<std::unique_ptr<Flake>> g_vtFlakes;
 
-void timer();
+void OnDrawing();
 DrawingManager* g_drawingManager{ nullptr }; // TODO: refactor singleton
 
 DrawingManager* DrawingManager::GetInstance()
@@ -25,13 +25,10 @@ DrawingManager* DrawingManager::GetInstance()
 DrawingManager::DrawingManager(HWND hWorkerWnd, UINT numSnowFlakes, UINT frameRate)
 	:hWorkerWnd{ hWorkerWnd }, picWidth{ 0 }, picHeight{ 0 }, numSnowFlakes{ numSnowFlakes }, frameRate{frameRate}
 {
-	//screenWidth = GetSystemMetrics(SM_CXVIRTUALSCREEN) - GetSystemMetrics(SM_XVIRTUALSCREEN);
-	//screenHeight = GetSystemMetrics(SM_CYVIRTUALSCREEN) - GetSystemMetrics(SM_YVIRTUALSCREEN);
-
-	screenWidth = GetSystemMetrics(SM_CXSCREEN);
-	screenHeight = GetSystemMetrics(SM_CYSCREEN);
-	screenOffsetX = 3840;//-GetSystemMetrics(SM_XVIRTUALSCREEN);
-	screenOffsetY = GetSystemMetrics(SM_YVIRTUALSCREEN);
+	screenWidth = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+	screenHeight = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+	screenOffsetX = 0;
+	screenOffsetY = 0;
 
 
 	if (!g_pFactory) {
@@ -125,7 +122,7 @@ void DrawingManager::InitDrawing()
 		g_vtFlakes.emplace_back(std::make_unique<Flake>(screenWidth, screenHeight));
 	}
 	endTimer = false;
-	drawingThread = std::thread(timer);
+	drawingThread = std::thread(OnDrawing);
 
 	InitBackgroundImage(path);
 }
@@ -299,26 +296,21 @@ bool DrawingManager::DrawDesktop()
 	return true;
 }
 
-void timer()
+void OnDrawing()
 {
 	while (!endTimer) {
 		std::wostringstream w;
 
 		auto start = std::chrono::high_resolution_clock::now();
+		
 		for (auto &f : g_vtFlakes) {
 			f->MoveNext();
 		}
+
 		g_drawingManager->DrawDesktop();
 		auto end = std::chrono::high_resolution_clock::now();
 
 		std::chrono::duration<double, std::milli> elapsed = end - start;
-		
-		w << "Draw takes " << elapsed.count() << " ms" << std::endl;
-
-		start = std::chrono::high_resolution_clock::now();
-		std::this_thread::sleep_for(std::chrono::milliseconds(1000 / g_drawingManager->frameRate));
-		end = std::chrono::high_resolution_clock::now();
-		w << "Waited " << elapsed.count() << " ms" << std::endl;
 
 		OutputDebugString(w.str().c_str());
 	}

@@ -105,6 +105,8 @@ BOOL IntializeShellIcon()
 
 BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 {
+	SetProcessDPIAware();
+
 	auto res = CoInitialize(NULL);
 
 	hInst = hInstance; // Store instance handle in our global variable
