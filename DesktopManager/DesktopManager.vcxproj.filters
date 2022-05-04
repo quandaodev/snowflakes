@@ -24,7 +24,7 @@
     <ClInclude Include="Resource.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="SnowFall.h">
+    <ClInclude Include="DesktopManager.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="Flake.h">
@@ -45,9 +45,12 @@
     <ClInclude Include="DebugInfo.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="MonitorManager.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="SnowFall.cpp">
+    <ClCompile Include="DesktopManager.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="Utilities.cpp">
@@ -62,9 +65,12 @@
     <ClCompile Include="MainWnd.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="MonitorManager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="SnowFall.rc">
+    <ResourceCompile Include="DesktopManager.rc">
       <Filter>Resource Files</Filter>
     </ResourceCompile>
   </ItemGroup>
@@ -72,7 +78,7 @@
     <Image Include="small.ico">
       <Filter>Resource Files</Filter>
     </Image>
-    <Image Include="SnowFall.ico">
+    <Image Include="DesktopManager.ico">
       <Filter>Resource Files</Filter>
     </Image>
     <Image Include="res\flake.bmp">

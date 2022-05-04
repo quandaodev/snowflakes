@@ -2,7 +2,7 @@
 //
 
 #include "framework.h"
-#include "SnowFall.h"
+#include "DesktopManager.h"
 #include "Flake.h"
 #include "DrawingManager.h"
 #include "shellapi.h"
@@ -11,10 +11,11 @@
 #include "wincodec.h"
 #include "wincodecsdk.h"
 #include "shlobj_core.h"
+#include "MonitorManager.h"
 
 #define MAX_LOADSTRING 100
 #define APPWM_ICONNOTIFY (WM_APP + 1)
-class __declspec(uuid("{283c9cbf-3d93-423c-8c01-a1bfaf75815a}")) SnowFallUuid;
+class __declspec(uuid("{283c9cbf-3d93-423c-8c01-a1bfaf75815a}")) DesktopManagerUuid;
 
 // Global Variables:
 HINSTANCE hInst;                                // current instance
@@ -23,12 +24,12 @@ WCHAR szWindowClass[MAX_LOADSTRING];            // the main window class name
 
 HWND hWorkerWnd{ 0 };
 
-wchar_t SnowAppToolTip[] = L"Snow fall application";
+wchar_t SnowAppToolTip[] = L"Desktop Manager application";
 HWND hSnowFallWnd{ 0 };
 bool mainWndMinized{ false };
 NOTIFYICONDATA nid = {};
 
-int g_nFrameRate = 60;
+int g_nFrameRate = 30;
 int g_nNumSnowFlakes = 30;
 
 DrawingManager* g_pDrawMan = nullptr; 
@@ -96,12 +97,14 @@ BOOL IntializeShellIcon()
 	nid.hWnd = hSnowFallWnd;
 	nid.uFlags = NIF_ICON | NIF_TIP | NIF_GUID | NIF_MESSAGE;
 	nid.uCallbackMessage = APPWM_ICONNOTIFY;
-	nid.guidItem = __uuidof(SnowFallUuid);
+	nid.guidItem = __uuidof(DesktopManagerUuid);
 	lstrcpyW(nid.szTip, SnowAppToolTip);
 	LoadIconMetric(hInst, MAKEINTRESOURCE(IDI_SNOWMAN), LIM_SMALL, &(nid.hIcon));
 
 	return TRUE;
 }
+
+
 
 BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 {
@@ -259,6 +262,8 @@ INT_PTR CALLBACK DialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 		{
 			delete g_pDrawMan;
 			g_pDrawMan = nullptr;
+
+			MonitorManager::Destroy();
 
 			Shell_NotifyIcon(NIM_DELETE, &nid);
 			PostQuitMessage(0);

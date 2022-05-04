@@ -1,6 +1,8 @@
 #include "resource.h"
 #include "DrawingManager.h"
 #include "Flake.h"
+#include "MonitorManager.h"
+#include <thread>
 
 using namespace std;
 
@@ -25,10 +27,20 @@ DrawingManager* DrawingManager::GetInstance()
 DrawingManager::DrawingManager(HWND hWorkerWnd, UINT numSnowFlakes, UINT frameRate)
 	:hWorkerWnd{ hWorkerWnd }, picWidth{ 0 }, picHeight{ 0 }, numSnowFlakes{ numSnowFlakes }, frameRate{frameRate}
 {
-	screenWidth = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-	screenHeight = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-	screenOffsetX = 0;
-	screenOffsetY = 0;
+    //auto wholeScreenWidth = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+    //auto wholeScreenHeight = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+
+	// Get the primary monitor coordinates
+	auto monitorMan = MonitorManager::GetInstance();
+	screenWidth = monitorMan->Monitors[0].Width();
+    screenHeight = monitorMan->Monitors[0].Height();
+    
+	for (int i = 1; i < monitorMan->Monitors.size(); ++i) {
+		screenOffsetX += monitorMan->Monitors[i].Left() < 0 ? std::abs(monitorMan->Monitors[i].Left()) : 0;
+		screenOffsetY += monitorMan->Monitors[i].Top() < 0 ? std::abs(monitorMan->Monitors[i].Top()) : 0;
+	}
+	screenOffsetX += monitorMan->Monitors[0].Left();
+    screenOffsetY += monitorMan->Monitors[0].Top();
 
 
 	if (!g_pFactory) {
@@ -57,6 +69,7 @@ DrawingManager::~DrawingManager()
 	if (g_pFactory) {
 		g_pFactory->Release();
 	}
+
 }
 
 void DrawingManager::InitBackgroundImage(wstring path)
@@ -214,7 +227,7 @@ HBITMAP DrawingManager::CreateBitmapMask(HBITMAP hbmColour, COLORREF crTranspare
 void DrawingManager::DrawDebugInfo(HDC hdc)
 {
 	std::wostringstream strStream;
-	strStream << "Width:" << screenWidth << " Height:" << screenHeight;
+	strStream << "Width:" << screenWidth << " Height:" << screenHeight << " X:" << screenOffsetX << " Y:" << screenOffsetY;
 
 	RECT rtText;
 	rtText.left = 500;
@@ -296,13 +309,34 @@ bool DrawingManager::DrawDesktop()
 	return true;
 }
 
-void OnDrawing()
+static void OnDrawing()
 {
+	auto lastFrame = std::chrono::high_resolution_clock::now();
+	std::chrono::duration<double, std::milli> lastDrawing{ 0 };
+	auto pDrawingMan = DrawingManager::GetInstance();
+
+	_ASSERT(pDrawingMan);
+
 	while (!endTimer) {
-		std::wostringstream w;
+		//std::wostringstream w;
 
 		auto start = std::chrono::high_resolution_clock::now();
 		
+		auto delayBetweenFrame = 1000 / pDrawingMan->frameRate - lastDrawing.count();
+		//w << "Delay between frame:" << delayBetweenFrame << " milSecs" << endl;
+
+		std::chrono::duration<double, std::milli> elapsedSinceLastFrame = start - lastFrame;
+        if (elapsedSinceLastFrame.count() < delayBetweenFrame)
+        {
+			if (delayBetweenFrame > lastDrawing.count())
+			{
+				//w << "Skip frame" << endl;
+				std::this_thread::sleep_for(std::chrono::milliseconds(1));
+			}
+
+            continue;
+        }
+
 		for (auto &f : g_vtFlakes) {
 			f->MoveNext();
 		}
@@ -310,9 +344,14 @@ void OnDrawing()
 		g_drawingManager->DrawDesktop();
 		auto end = std::chrono::high_resolution_clock::now();
 
-		std::chrono::duration<double, std::milli> elapsed = end - start;
+		std::chrono::duration<double, std::milli> timeSinceLastFrame = end - lastFrame;
+		lastFrame = end;
 
-		OutputDebugString(w.str().c_str());
+		lastDrawing = end - start;
+		//w << "Time for drawing:" << lastDrawing.count() << " milSecs" << endl;
+		//w << "Time since last frame:" << timeSinceLastFrame.count() << " milSecs" << endl;
+
+		//OutputDebugString(w.str().c_str());
 	}
 }
 
